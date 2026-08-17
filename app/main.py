@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import os
@@ -53,10 +54,6 @@ async def receive_webhook(
             detail="PSEUDOGRAM_API_KEY is not configured"
         )
 
-    api_key_fingerprint = hashlib.sha256(
-        api_key.encode("utf-8")
-    ).hexdigest()
-
     if not x_pseudogram_signature:
         raise HTTPException(
             status_code=401,
@@ -73,26 +70,30 @@ async def receive_webhook(
 
     received_sig = signature_header[7:].lower()
 
-    expected_signature = hmac.new(
-        api_key.encode("utf-8"),
-        body,
-        hashlib.sha256
-    ).hexdigest().lower()
+    # The PseudoGram API key is formatted as base64(email).secret_token
+    # Depending on simulator implementation, the HMAC secret is either the full key or the secret token portion
+    candidate_keys = [api_key.encode("utf-8")]
+    if "." in api_key:
+        secret_part = api_key.split(".", 1)[1]
+        candidate_keys.append(secret_part.encode("utf-8"))
+        try:
+            padded = secret_part + "=" * (-len(secret_part) % 4)
+            candidate_keys.append(base64.b64decode(padded))
+        except Exception:
+            pass
 
-    if not hmac.compare_digest(
-        received_sig,
-        expected_signature
-    ):
-        print(
-            "WEBHOOK_SIGNATURE_DIAGNOSTIC:",
-            f"api_key_fingerprint={api_key_fingerprint}",
-            f"raw_body_length={len(body)}",
-            f"raw_body_sha256={hashlib.sha256(body).hexdigest()}",
-            f"received_signature_length={len(received_sig)}",
-            f"expected_signature_length={len(expected_signature)}",
-            f"received_signature_fingerprint={hashlib.sha256(received_sig.encode('utf-8')).hexdigest()}",
-            f"expected_signature_fingerprint={hashlib.sha256(expected_signature.encode('utf-8')).hexdigest()}"
-        )
+    signature_valid = False
+    for candidate in candidate_keys:
+        expected_sig = hmac.new(
+            candidate,
+            body,
+            hashlib.sha256
+        ).hexdigest().lower()
+        if hmac.compare_digest(received_sig, expected_sig):
+            signature_valid = True
+            break
+
+    if not signature_valid:
         raise HTTPException(
             status_code=401,
             detail="Invalid webhook signature"

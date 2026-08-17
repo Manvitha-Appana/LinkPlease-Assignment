@@ -5,8 +5,9 @@ DATABASE_NAME = "linkplease.db"
 
 
 def get_connection():
-    connection = sqlite3.connect(DATABASE_NAME)
+    connection = sqlite3.connect(DATABASE_NAME, timeout=30.0)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
     return connection
 
 
@@ -30,6 +31,13 @@ def initialize_database():
             rule_id TEXT NOT NULL,
             user_id TEXT NOT NULL,
             UNIQUE(rule_id, user_id)
+        )
+    """)
+
+    # Processed events table to prevent duplicate webhook processing
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS processed_events (
+            event_id TEXT PRIMARY KEY
         )
     """)
 
@@ -60,39 +68,63 @@ def initialize_database():
     connection.close()
 
 
-def has_user_been_processed(rule_id: str, user_id: str):
+def try_claim_user_for_rule(rule_id: str, user_id: str) -> bool:
+    """
+    Atomically records (rule_id, user_id) in processed_users.
+    Returns True if successfully claimed, False if already processed.
+    """
     connection = get_connection()
     cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO processed_users (rule_id, user_id)
+            VALUES (?, ?)
+            """,
+            (rule_id, user_id)
+        )
+        connection.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        connection.close()
 
+
+def unclaim_user_for_rule(rule_id: str, user_id: str):
+    """
+    Removes the claim if sending ultimately failed permanently.
+    """
+    connection = get_connection()
+    cursor = connection.cursor()
     cursor.execute(
         """
-        SELECT 1
-        FROM processed_users
+        DELETE FROM processed_users
         WHERE rule_id = ? AND user_id = ?
         """,
         (rule_id, user_id)
     )
-
-    result = cursor.fetchone()
-    connection.close()
-
-    return result is not None
-
-
-def mark_user_as_processed(rule_id: str, user_id: str):
-    connection = get_connection()
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO processed_users (rule_id, user_id)
-        VALUES (?, ?)
-        """,
-        (rule_id, user_id)
-    )
-
     connection.commit()
     connection.close()
+
+
+def is_event_duplicate_or_record(event_id: str) -> bool:
+    """
+    Records event_id atomically. Returns True if event was already processed.
+    """
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO processed_events (event_id) VALUES (?)",
+            (event_id,)
+        )
+        connection.commit()
+        return False
+    except sqlite3.IntegrityError:
+        return True
+    finally:
+        connection.close()
 
 
 def increment_stat(stat_name: str):
