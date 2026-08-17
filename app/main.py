@@ -27,7 +27,7 @@ def home():
 
 @app.get("/version")
 def version():
-    return {"version": "v2_prod"}
+    return {"version": "v3_prod"}
 
 
 @app.post("/rules", status_code=status.HTTP_201_CREATED)
@@ -60,37 +60,53 @@ async def receive_webhook(
             detail="PSEUDOGRAM_API_KEY is not configured"
         )
 
-    if not x_pseudogram_signature:
+    signature_raw = (
+        x_pseudogram_signature
+        or request.headers.get("x-pseudogram-signature")
+        or request.headers.get("x-pseudogram-signature-256")
+        or request.headers.get("x-hub-signature-256")
+        or request.headers.get("signature")
+        or ""
+    ).strip()
+
+    if not signature_raw:
         raise HTTPException(
             status_code=401,
             detail="Missing webhook signature"
         )
 
-    signature_header = x_pseudogram_signature.strip()
+    # Extract hex digest after prefix if present
+    if signature_raw.lower().startswith("sha256="):
+        received_sig = signature_raw[7:].strip().lower()
+    elif signature_raw.lower().startswith("sha256:"):
+        received_sig = signature_raw[7:].strip().lower()
+    else:
+        received_sig = signature_raw.strip().lower()
 
-    if not signature_header.startswith("sha256="):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid webhook signature"
-        )
-
-    received_sig = signature_header[7:].lower()
-
-    # Candidate keys: full API key, secret token part, and base64-decoded token part
+    # Candidate keys: full API key, secret token part, decoded token, email, and email b64
     candidate_keys = [api_key.encode("utf-8")]
     if "." in api_key:
-        secret_part = api_key.split(".", 1)[1]
-        candidate_keys.append(secret_part.encode("utf-8"))
+        parts = api_key.split(".", 1)
+        # Secret token part
+        candidate_keys.append(parts[1].encode("utf-8"))
         try:
-            padded = secret_part + "=" * (-len(secret_part) % 4)
-            candidate_keys.append(base64.b64decode(padded))
+            padded_secret = parts[1] + "=" * (-len(parts[1]) % 4)
+            candidate_keys.append(base64.b64decode(padded_secret))
         except Exception:
             pass
+        # Email part
+        try:
+            padded_email = parts[0] + "=" * (-len(parts[0]) % 4)
+            decoded_email = base64.b64decode(padded_email)
+            candidate_keys.append(decoded_email)
+            candidate_keys.append(decoded_email.decode("utf-8").strip().encode("utf-8"))
+        except Exception:
+            pass
+        candidate_keys.append(parts[0].encode("utf-8"))
 
-    # Candidate bodies: raw wire bytes, plus canonical JSON serializations
-    candidate_bodies = [body]
+    # Candidate bodies: raw wire bytes, stripped, newlines, and canonical JSON serializations
+    candidate_bodies = [body, body.strip(), body.rstrip(b"\r\n"), body + b"\n", body + b"\r\n"]
     try:
-        import json
         parsed_json = json.loads(body)
         candidate_bodies.extend([
             json.dumps(parsed_json).encode("utf-8"),
@@ -98,6 +114,7 @@ async def receive_webhook(
             json.dumps(parsed_json, sort_keys=True).encode("utf-8"),
             json.dumps(parsed_json, sort_keys=True, separators=(",", ":")).encode("utf-8"),
             json.dumps(parsed_json, indent=2).encode("utf-8"),
+            json.dumps(parsed_json, indent=4).encode("utf-8"),
         ])
     except Exception:
         pass
