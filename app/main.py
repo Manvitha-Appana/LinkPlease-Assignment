@@ -68,6 +68,14 @@ async def receive_webhook(
         x_pseudogram_signature,
         expected_header
     ):
+        print(
+        "SIGNATURE DEBUG:",
+        "received_length=", len(x_pseudogram_signature),
+        "expected_length=", len(expected_header),
+        "received_prefix=", x_pseudogram_signature[:7],
+        "expected_prefix=", expected_header[:7]
+    )
+
         raise HTTPException(
             status_code=401,
             detail="Invalid webhook signature"
