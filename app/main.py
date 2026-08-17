@@ -35,7 +35,10 @@ def create_rule_endpoint(rule: RuleCreate):
 async def receive_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
-    x_pseudogram_signature: str = Header(None)
+    x_pseudogram_signature: str = Header(
+    None,
+    alias="X-PseudoGram-Signature"
+)
 ):
     body = await request.body()
 
