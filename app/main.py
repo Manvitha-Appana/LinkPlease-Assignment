@@ -79,6 +79,16 @@ async def receive_webhook(
         received_sig,
         expected_signature
     ):
+        print(
+            "WEBHOOK_SIGNATURE_DIAGNOSTIC:",
+            f"starts_with_sha256={signature_header.startswith('sha256=')}",
+            f"raw_body_length={len(body)}",
+            f"raw_body_sha256={hashlib.sha256(body).hexdigest()}",
+            f"received_signature_sha256={hashlib.sha256(signature_header.encode('utf-8')).hexdigest()}",
+            f"expected_signature_sha256={hashlib.sha256(expected_signature.encode('utf-8')).hexdigest()}",
+            f"received_signature_length={len(signature_header)}",
+            f"expected_signature_length={len(expected_signature)}"
+        )
         raise HTTPException(
             status_code=401,
             detail="Invalid webhook signature"
