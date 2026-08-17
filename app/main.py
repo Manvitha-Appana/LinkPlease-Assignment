@@ -25,6 +25,11 @@ def home():
     return {"message": "LinkPlease backend is running"}
 
 
+@app.get("/version")
+def version():
+    return {"version": "v2_prod"}
+
+
 @app.post("/rules", status_code=status.HTTP_201_CREATED)
 def create_rule_endpoint(rule: RuleCreate):
     return create_rule(
