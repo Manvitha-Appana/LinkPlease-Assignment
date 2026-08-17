@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 
 from fastapi import FastAPI, BackgroundTasks, Header, HTTPException, Request, status
@@ -70,8 +71,7 @@ async def receive_webhook(
 
     received_sig = signature_header[7:].lower()
 
-    # The PseudoGram API key is formatted as base64(email).secret_token
-    # Depending on simulator implementation, the HMAC secret is either the full key or the secret token portion
+    # Candidate keys: full API key, secret token part, and base64-decoded token part
     candidate_keys = [api_key.encode("utf-8")]
     if "." in api_key:
         secret_part = api_key.split(".", 1)[1]
@@ -82,15 +82,33 @@ async def receive_webhook(
         except Exception:
             pass
 
+    # Candidate bodies: raw wire bytes, plus canonical JSON serializations
+    candidate_bodies = [body]
+    try:
+        import json
+        parsed_json = json.loads(body)
+        candidate_bodies.extend([
+            json.dumps(parsed_json).encode("utf-8"),
+            json.dumps(parsed_json, separators=(",", ":")).encode("utf-8"),
+            json.dumps(parsed_json, sort_keys=True).encode("utf-8"),
+            json.dumps(parsed_json, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            json.dumps(parsed_json, indent=2).encode("utf-8"),
+        ])
+    except Exception:
+        pass
+
     signature_valid = False
-    for candidate in candidate_keys:
-        expected_sig = hmac.new(
-            candidate,
-            body,
-            hashlib.sha256
-        ).hexdigest().lower()
-        if hmac.compare_digest(received_sig, expected_sig):
-            signature_valid = True
+    for candidate_key in candidate_keys:
+        for candidate_body in candidate_bodies:
+            expected_sig = hmac.new(
+                candidate_key,
+                candidate_body,
+                hashlib.sha256
+            ).hexdigest().lower()
+            if hmac.compare_digest(received_sig, expected_sig):
+                signature_valid = True
+                break
+        if signature_valid:
             break
 
     if not signature_valid:
