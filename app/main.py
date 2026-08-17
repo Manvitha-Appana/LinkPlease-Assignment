@@ -36,9 +36,9 @@ async def receive_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
     x_pseudogram_signature: str = Header(
-    None,
-    alias="X-PseudoGram-Signature"
-)
+        None,
+        alias="X-PseudoGram-Signature"
+    )
 ):
     body = await request.body()
 
@@ -59,19 +59,26 @@ async def receive_webhook(
             detail="Missing webhook signature"
         )
 
+    signature_header = x_pseudogram_signature.strip()
+
+    if not signature_header.startswith("sha256="):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid webhook signature"
+        )
+
+    received_sig = signature_header[7:].lower()
+
     expected_signature = hmac.new(
-        api_key.encode(),
+        api_key.encode("utf-8"),
         body,
         hashlib.sha256
-    ).hexdigest()
-
-    expected_header = f"sha256={expected_signature}"
+    ).hexdigest().lower()
 
     if not hmac.compare_digest(
-        x_pseudogram_signature,
-        expected_header
+        received_sig,
+        expected_signature
     ):
-       
         raise HTTPException(
             status_code=401,
             detail="Invalid webhook signature"
